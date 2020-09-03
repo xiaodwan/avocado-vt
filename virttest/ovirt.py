@@ -123,6 +123,7 @@ class VMManager(virt_vm.BaseVM):
             self.device_id = []
             self.pci_devices = []
             self.uuid = None
+            self.vm = None
             self.only_pty = False
             self.remote_sessions = []
 
@@ -140,12 +141,15 @@ class VMManager(virt_vm.BaseVM):
         if self.name:
             self.update_instance()
 
-    def update_instance(self):
+    def update_instance(self, all_content=False):
         vms_service = self.connection.system_service().vms_service()
-        vms = vms_service.list(search='name=%s' % self.name)
+        vms = vms_service.list(search='name=%s' % self.name,
+                               all_content=all_content)
         if vms:
             vm = vms[0]
+            self.vm = vm
             self.instance = vms_service.vm_service(vm.id)
+            self.uuid = vm.id
         else:
             self.instance = None
 
@@ -233,7 +237,16 @@ class VMManager(virt_vm.BaseVM):
         end_time = time.time() + timeout
         if self.is_dead():
             logging.info('Starting VM %s' % self.name)
-            self.instance.start()
+            # ovirtsdk4.Error: Fault reason is "Operation Failed". Fault detail is "[Cannot run VM. VM is being updated.]". HTTP response code is 409
+            for i in range(5):
+                try:
+                    self.instance.start()
+                    break
+                except ovirtsdk4.Error as e:
+                    if 'VM is being updated' in str(e):
+                        time.sleep(3)
+                        continue
+                    raise
             vm_powering_up = False
             vm_up = False
             while time.time() < end_time:
@@ -601,6 +614,21 @@ class VMManager(virt_vm.BaseVM):
             raise virt_vm.VMIPAddressMissingError(mac)
         else:
             raise ValueError("Ovirt only support bridge nettype now.")
+
+    def enable_serial(self):
+        """
+        Enable serial console on rhv
+        """
+        self.update_instance(all_content=True)
+        if not self.vm.console.enabled:
+            self.instance.update(
+                types.Vm(
+                    console=types.Console(
+                        enabled=True
+                    )
+                )
+            )
+
 
 
 class DataCenterManager(object):

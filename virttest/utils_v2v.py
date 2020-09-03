@@ -4,6 +4,8 @@ Virt-v2v test utility functions.
 :copyright: 2008-2012 Red Hat Inc.
 """
 
+from __future__ import print_function
+
 import os
 import re
 import time
@@ -12,8 +14,6 @@ import logging
 import random
 import uuid
 import aexpect
-
-from __future__ import print_function
 
 from avocado.utils import path
 from avocado.utils import process
@@ -491,6 +491,7 @@ class VMCheck(object):
             ) if self.virsh_session else params.get('virsh_session_id')
         self.windows_root = params.get("windows_root", r"C:\WINDOWS")
         self.output_method = params.get("output_method")
+        self.luks_password = params_get(params, "luks_password")
         # Need create session after create the instance
         self.session = None
 
@@ -509,9 +510,39 @@ class VMCheck(object):
             raise ValueError("Doesn't support %s target now" % self.target)
 
     def create_session(self, timeout=480):
+        def luks_bootsup():
+            extend_prompts = {'Please enter passphrase for disk': self.luks_password}
+            esxi_host = params_get(self.params, 'esx_hostname')
+            username = params_get(self.params, 'username', 'root')
+            password = params_get(self.params, 'esxi_password')
+
+            # Enable serial console on rhv
+            self.vm.enable_serial()
+            self.vm.destroy()
+            self.vm.start()
+            cmd = "nc -U %s" % ('/var/run/ovirt-vmconsole-console/%s.sock' % self.vm.uuid)
+            # Tricy way to add cmd to a ssh session
+            tricky_host = '%s "%s"' % (esxi_host, cmd)
+            # ssh session
+            session = remote.remote_login(client='ssh',
+                                          host=tricky_host,
+                                          port=22,
+                                          prompt=r"[\#\$\[\]]",
+                                          username=username,
+                                          password=password,
+                                          extend_prompts=extend_prompts,
+                                          renew_inputs={'password':'redhat'},
+                                          preferred_authenticaton='password,keyboard-interactive')
+            session.close()
+
         if self.session:
             logging.debug('vm session %s exists', self.session)
             return
+
+        # We treat it as luks encryped if luks_password is set
+        if self.luks_password:
+            luks_bootsup()
+
         self.session = self.vm.wait_for_login(nic_index=self.nic_index,
                                               timeout=timeout,
                                               username=self.username,

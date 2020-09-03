@@ -117,7 +117,7 @@ def quote_path(path):
 
 
 def handle_prompts(session, username, password, prompt, timeout=10,
-                   debug=False):
+                   debug=False, extend_prompts=None):
     """
     Connect to a remote host (guest) using SSH or Telnet or else.
 
@@ -143,22 +143,34 @@ def handle_prompts(session, username, password, prompt, timeout=10,
     login_prompt_count = 0
     last_chance = False
 
+    REGULAR_PROMPTS = [r"[Aa]re you sure", r"[Pp]assword:\s*",
+                       # Prompt of rescue mode for Red Hat.
+                       r"\(or (press|type) Control-D to continue\):\s*$",
+                       # Prompt of rescue mode for SUSE.
+                       r"[Gg]ive.*[Ll]ogin:\s*$",
+                       # Don't match "Last Login:"
+                       r"(?<![Ll]ast )[Ll]ogin:\s*$",
+                       r"[Cc]onnection.*closed", r"[Cc]onnection.*refused",
+                       r"[Pp]lease wait", r"[Ww]arning", r"[Ee]nter.*username",
+                       r"[Ee]nter.*password", r"[Cc]onnection timed out", prompt,
+                       r"Escape character is.*",
+                       r"Command>"]
+
+    EXTEND_PROMPTES = list(
+        extend_prompts.keys()) if isinstance(
+        extend_prompts,
+        dict) else []
+    PROMPTS = REGULAR_PROMPTS + EXTEND_PROMPTES
+
     output = ""
     while True:
         try:
             match, text = session.read_until_last_line_matches(
-                [r"[Aa]re you sure", r"[Pp]assword:\s*",
-                 # Prompt of rescue mode for Red Hat.
-                 r"\(or (press|type) Control-D to continue\):\s*$",
-                 r"[Gg]ive.*[Ll]ogin:\s*$",  # Prompt of rescue mode for SUSE.
-                 r"(?<![Ll]ast )[Ll]ogin:\s*$",  # Don't match "Last Login:"
-                 r"[Cc]onnection.*closed", r"[Cc]onnection.*refused",
-                 r"[Pp]lease wait", r"[Ww]arning", r"[Ee]nter.*username",
-                 r"[Ee]nter.*password", r"[Cc]onnection timed out", prompt,
-                 r"Escape character is.*",
-                 r"Command>"],
+                PROMPTS,
                 timeout=timeout, internal_timeout=0.5)
             output += text
+            # Set to False when reading success
+            last_chance = False
             if match == 0:  # "Are you sure you want to continue connecting"
                 if debug:
                     logging.debug("Got 'Are you sure...', sending 'yes'")
@@ -220,6 +232,136 @@ def handle_prompts(session, username, password, prompt, timeout=10,
                 logging.debug(
                     "Got VMware VCenter prompt, send 'shell' to launch bash")
                 session.sendline('shell')
+            else:
+                for i, value in enumerate(EXTEND_PROMPTES):
+                    if match == len(REGULAR_PROMPTS) + i:
+                        contents = extend_prompts.get(EXTEND_PROMPTES[i])
+                        logging.debug(
+                            "Extend prompts '%s' matched, sending '%s'",
+                            EXTEND_PROMPTES[i],
+                            contents)
+                        session.sendline(contents)
+        except aexpect.ExpectTimeoutError as e:
+            # sometimes, linux kernel print some message to console
+            # the message maybe impact match login pattern, so send
+            # a empty line to avoid unexpect login timeout
+            if not last_chance:
+                time.sleep(0.5)
+                session.sendline()
+                last_chance = True
+                continue
+            else:
+                raise LoginTimeoutError(e.output)
+        except aexpect.ExpectProcessTerminatedError as e:
+            raise LoginProcessTerminatedError(e.status, e.output)
+
+    return output
+
+
+def handle_prompts_by_func(session, username, password, prompt, timeout=10, debug=True, extend_prompts={}, renew_inputs={}):
+    """
+    Connect to a remote host (guest) using SSH or Telnet or else.
+    """
+
+    REGULAR_PROMPTS = [r"[Aa]re you sure",
+                       r"[Pp]assword:\s*",
+                       # Prompt of rescue mode for Red Hat.
+                       r"\(or (press|type) Control-D to continue\):\s*$",
+                       r"Login incorrect",
+                       # Prompt of rescue mode for SUSE.
+                       r"[Gg]ive.*[Ll]ogin:\s*$",
+                       # Don't match "Last Login:"
+                       r"(?<![Ll]ast )[Ll]ogin:\s*$",
+                       r"[Cc]onnection.*closed",
+                       r"[Cc]onnection.*refused",
+                       r"[Pp]lease wait",
+                       r"[Ww]arning",
+                       r"[Ee]nter.*username",
+                       r"[Ee]nter.*password",
+                       r"[Cc]onnection timed out",
+                       prompt,
+                       r"Escape character is.*"]
+
+    EXTEND_PROMPTES = list(
+        extend_prompts.keys()) if isinstance(
+        extend_prompts,
+        dict) else []
+    PROMPTS = REGULAR_PROMPTS + EXTEND_PROMPTES
+
+    output = ""
+    last_chance = False
+    login_prompt_count = 0
+    password_prompt_count = 0
+    while True:
+        try:
+            match, text = session.read_until_last_line_matches(
+                PROMPTS,
+                timeout=timeout, internal_timeout=0.5)
+            output += text
+            # Set to False when reading success
+            last_chance = False
+            if login_prompt_count == 1 or password_prompt_count > 10:
+                logging.debug('Login invalid, renew username and password')
+                username = renew_inputs.get('username') if renew_inputs.get('username') else username
+                password = renew_inputs.get('password') if renew_inputs.get('password') else password
+
+            if match == 0:  # "Are you sure you want to continue connecting"
+                if debug:
+                    logging.debug("Got 'Are you sure...', sending 'yes'")
+                session.sendline("yes")
+                continue
+            elif match in [1, 2, 4, 11]:  # "password:"
+                if debug:
+                    logging.debug("Got password prompt, sending '%s'",
+                                  password)
+                session.sendline(password)
+                password_prompt_count += 1
+                continue
+            elif match == 5 or match == 10:  # "login:"
+                if debug:
+                    logging.debug("Got username prompt; sending '%s'",
+                                  username)
+                session.sendline(username)
+                login_prompt_count += 1
+                if login_prompt_count > 3:
+                    raise LoginAuthenticationError(msg, text)
+                    break
+                continue
+            elif match == 6:  # "Connection closed"
+                raise LoginError("Client said 'connection closed'", text)
+                break
+            elif match == 7:  # "Connection refused"
+                raise LoginError("Client said 'connection refused'", text)
+                break
+            elif match == 12:  # Connection timeout
+                raise LoginError("Client said 'connection timeout'", text)
+                break
+            elif match == 8:  # "Please wait"
+                if debug:
+                    logging.debug("Got 'Please wait'")
+                timeout = 30
+                continue
+            elif match == 9:  # "Warning added RSA"
+                if debug:
+                    logging.debug("Got 'Warning added RSA to known host list")
+                continue
+            elif match == 13:  # prompt
+                if debug:
+                    logging.debug("Got shell prompt -- logged in")
+                break
+            elif match == 14:  # console prompt
+                logging.debug("Got console prompt, send return to show login")
+                session.sendline()
+            else:
+                for i, value in enumerate(EXTEND_PROMPTES):
+                    if match == len(REGULAR_PROMPTS) + i:
+                        contents = extend_prompts.get(EXTEND_PROMPTES[i])
+                        logging.debug(
+                            "Extend prompts '%s' matched, sending '%s'",
+                            EXTEND_PROMPTES[i],
+                            contents)
+                        session.sendline(contents)
+
         except aexpect.ExpectTimeoutError as e:
             # sometimes, linux kernel print some message to console
             # the message maybe impact match login pattern, so send
@@ -241,7 +383,7 @@ def remote_login(client, host, port, username, password, prompt, linesep="\n",
                  log_filename=None, timeout=10, interface=None, identity_file=None,
                  status_test_command="echo $?", verbose=False, bind_ip=None,
                  preferred_authenticaton='password',
-                 user_known_hosts_file='/dev/null'):
+                 user_known_hosts_file='/dev/null', extend_prompts=None, renew_inputs={}):
     """
     Log into a remote host (guest) using SSH/Telnet/Netcat.
 
@@ -303,7 +445,10 @@ def remote_login(client, host, port, username, password, prompt, linesep="\n",
     session = aexpect.ShellSession(cmd, linesep=linesep, prompt=prompt,
                                    status_test_command=status_test_command)
     try:
-        handle_prompts(session, username, password, prompt, timeout)
+        if not renew_inputs:
+            handle_prompts(session, username, password, prompt, timeout, extend_prompts=extend_prompts)
+        else:
+            handle_prompts_by_func(session, username, password, prompt, timeout, extend_prompts=extend_prompts, renew_inputs=renew_inputs)
     except Exception:
         session.close()
         raise
@@ -570,7 +715,7 @@ def scp_to_remote(host, port, username, password, local_path, remote_path,
     command += (" -v -o UserKnownHostsFile=/dev/null "
                 "-o StrictHostKeyChecking=no "
                 "-o PreferredAuthentications=password %s "
-                "-P %s %s %s@\[%s\]:%s" %
+                r"-P %s %s %s@\[%s\]:%s" %
                 (limit, port, quote_path(local_path), username, host,
                  pipes.quote(remote_path)))
     password_list = []
@@ -612,7 +757,7 @@ def scp_from_remote(host, port, username, password, remote_path, local_path,
     command += (" -v -o UserKnownHostsFile=/dev/null "
                 "-o StrictHostKeyChecking=no "
                 "-o PreferredAuthentications=password %s "
-                "-P %s %s@\[%s\]:%s %s" %
+                r"-P %s %s@\[%s\]:%s %s" %
                 (limit, port, username, host, quote_path(remote_path),
                  pipes.quote(local_path)))
     password_list = []
@@ -661,7 +806,7 @@ def scp_between_remotes(src, dst, port, s_passwd, d_passwd, s_name, d_name,
     command += (" -v -o UserKnownHostsFile=/dev/null "
                 "-o StrictHostKeyChecking=no "
                 "-o PreferredAuthentications=password %s -P %s"
-                " %s@\[%s\]:%s %s@\[%s\]:%s" %
+                r" %s@\[%s\]:%s %s@\[%s\]:%s" %
                 (limit, port, s_name, src, quote_path(s_path), d_name, dst,
                  pipes.quote(d_path)))
     password_list = []
