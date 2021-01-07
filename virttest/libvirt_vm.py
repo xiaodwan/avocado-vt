@@ -16,8 +16,6 @@ import tempfile
 import platform
 
 import aexpect
-from aexpect import remote
-
 from avocado.utils import process
 from avocado.utils import crypto
 from avocado.core import exceptions
@@ -27,6 +25,7 @@ from virttest import utils_misc
 from virttest import cpu
 from virttest import virt_vm
 from virttest import storage
+from virttest import remote
 from virttest import virsh
 from virttest import libvirt_xml
 from virttest import data_dir

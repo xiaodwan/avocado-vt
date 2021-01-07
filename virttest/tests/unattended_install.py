@@ -13,8 +13,6 @@ try:
 except ImportError:
     import ConfigParser
 
-from aexpect import remote
-
 from avocado.core import exceptions
 from avocado.utils import astring
 from avocado.utils import iso9660
@@ -26,6 +24,7 @@ from virttest import virt_vm
 from virttest import asset
 from virttest import utils_disk
 from virttest import qemu_monitor
+from virttest import remote
 from virttest import syslog_server
 from virttest import http_server
 from virttest import data_dir

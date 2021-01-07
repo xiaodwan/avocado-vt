@@ -1,7 +1,7 @@
 import threading
 
 
-from aexpect import remote
+from . import remote
 
 
 class ConsoleError(Exception):

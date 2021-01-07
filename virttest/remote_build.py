@@ -3,8 +3,7 @@ import re
 import hashlib
 import logging
 
-from aexpect import remote
-
+from virttest import remote
 from virttest import data_dir
 
 

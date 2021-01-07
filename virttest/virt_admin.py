@@ -29,15 +29,12 @@ import time
 import select
 
 import aexpect
-from aexpect import remote
-
 from avocado.utils import path
 from avocado.utils import process
 
-from virttest import propcan
-from virttest import utils_misc
-from virttest import utils_split_daemons
-from virttest import utils_config
+from . import propcan
+from . import remote
+from . import utils_misc
 
 
 # list of symbol names NOT to wrap as Virtadmin class methods
