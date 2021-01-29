@@ -279,19 +279,19 @@ class Target(object):
                                                   vddk_lib_prefix + str(i))
                             if all(compare_md5(os.path.join(mount_point, file_i), os.path.join(
                                     vddk_lib, file_i)) for file_i in check_list):
-                                os.symlink(vddk_lib, vddk_libdir, True)
+                                os.symlink(vddk_lib, vddk_libdir)
                                 break
 
                         if not os.path.exists(vddk_libdir):
                             vddk_lib = '%s/%s' % (vddk_lib_rootdir,
                                                   vddk_lib_prefix + str(vddklib_count + 1))
                             shutil.copytree(mount_point, vddk_lib)
-                            os.symlink(vddk_lib, vddk_libdir, True)
+                            os.symlink(vddk_lib, vddk_libdir)
                     else:
                         vddk_lib = '%s/%s' % (vddk_lib_rootdir,
                                               vddk_lib_prefix + '1')
                         shutil.copytree(mount_point, vddk_lib)
-                        os.symlink(vddk_lib, vddk_libdir, True)
+                        os.symlink(vddk_lib, vddk_libdir)
 
                     logging.info('vddklib on local server is %s', vddk_lib)
                     self.vddk_libdir = vddk_libdir
